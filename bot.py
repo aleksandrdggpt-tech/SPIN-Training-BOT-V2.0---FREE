@@ -370,7 +370,54 @@ def main():
     
     # Запуск бота
     logger.info("SPIN Training Bot запущен!")
-    application.run_polling()
+    
+    # Запускаем бота в фоне
+    import asyncio
+    import threading
+    
+    def run_bot():
+        asyncio.run(application.run_polling())
+    
+    bot_thread = threading.Thread(target=run_bot, daemon=True)
+    bot_thread.start()
+    
+    # Запускаем простой веб-сервер для health checks
+    from http.server import HTTPServer, BaseHTTPRequestHandler
+    import socket
+    
+    class HealthCheckHandler(BaseHTTPRequestHandler):
+        def do_GET(self):
+            if self.path == '/health':
+                self.send_response(200)
+                self.send_header('Content-type', 'text/plain')
+                self.end_headers()
+                self.wfile.write(b'OK')
+            else:
+                self.send_response(404)
+                self.end_headers()
+        
+        def log_message(self, format, *args):
+            # Отключаем логирование HTTP запросов
+            pass
+    
+    # Находим свободный порт
+    def find_free_port():
+        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+            s.bind(('', 0))
+            s.listen(1)
+            port = s.getsockname()[1]
+        return port
+    
+    port = int(os.getenv('PORT', 8080))
+    
+    try:
+        server = HTTPServer(('0.0.0.0', port), HealthCheckHandler)
+        logger.info(f"Health check server запущен на порту {port}")
+        server.serve_forever()
+    except Exception as e:
+        logger.error(f"Ошибка запуска health check сервера: {e}")
+        # Если не удалось запустить веб-сервер, просто запускаем бота
+        application.run_polling()
 
 if __name__ == '__main__':
     main()
