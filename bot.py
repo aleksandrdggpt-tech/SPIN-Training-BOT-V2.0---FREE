@@ -370,6 +370,7 @@ def main():
     
     # Запуск бота
     logger.info("SPIN Training Bot запущен!")
+    application.run_polling()
     
     # Запускаем бота в фоне
     import asyncio
