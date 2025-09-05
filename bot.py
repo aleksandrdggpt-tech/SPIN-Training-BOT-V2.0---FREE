@@ -252,6 +252,9 @@ async def send_final_report(update: Update, user: Dict[str, Any]):
 💡 РЕКОМЕНДАЦИИ:
 {recommendations_text}
 
+🚀 ПОЛЕЗНЫЙ КОНТЕНТ ПО ПРОДЖАМ И ИИ:
+и новые боты в будущем вы сможете найти на канале @TaktikaKutuzova
+
 🎯 Для новой тренировки напишите "начать" """
 
     await update.message.reply_text(report)
