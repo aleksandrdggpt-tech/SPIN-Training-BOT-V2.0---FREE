@@ -253,7 +253,7 @@ async def send_final_report(update: Update, user: Dict[str, Any]):
 {recommendations_text}
 
 🚀 ПОЛЕЗНЫЙ КОНТЕНТ ПО ПРОДЖАМ И ИИ:
-вы сможете найти на канале @TaktikaKutuzova
+вы сможете найти на канале [Тактика Кутузова](https://t.me/TaktikaKutuzova)
 
 🎯 Для новой тренировки напишите "начать" """
 
