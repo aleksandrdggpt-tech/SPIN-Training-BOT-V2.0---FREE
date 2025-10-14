@@ -1,11 +1,15 @@
 import os
 import logging
-from typing import Dict, Any
+from typing import Dict, Any, Optional
 from dotenv import load_dotenv
 from telegram import Update
 from telegram.ext import Application, CommandHandler, MessageHandler, filters, ContextTypes
 import openai
 import httpx
+
+from engine.scenario_loader import ScenarioLoader, ScenarioValidationError
+from engine.question_analyzer import QuestionAnalyzer
+from engine.report_generator import ReportGenerator
 
 # Загрузка переменных окружения
 load_dotenv()
@@ -17,48 +21,21 @@ logger = logging.getLogger(__name__)
 # Конфигурация
 BOT_TOKEN = os.getenv('BOT_TOKEN')
 OPENAI_API_KEY = os.getenv('OPENAI_API_KEY')
+SCENARIO_PATH = os.getenv('SCENARIO_PATH', 'scenarios/spin_sales/config.json')
 
 # Отладочная информация
 print(f"BOT_TOKEN: {BOT_TOKEN}")
 print(f"OPENAI_API_KEY: {OPENAI_API_KEY[:20] if OPENAI_API_KEY else 'None'}...")
+print(f"SCENARIO_PATH: {SCENARIO_PATH}")
 
 # Хранилище данных пользователей
 user_data: Dict[int, Dict[str, Any]] = {}
 
-# Промпты
-CASE_GENERATION_PROMPT = """Вы телеграмм бот, который изображает Нила Рекхем, автора метода SPIN-продаж. Генерируйте клиентский кейс в формате:
-
-🎯 КЛИЕНТСКИЙ КЕЙС:
-
-Должность клиента: [Директор по закупкам/Собственник компании/Главный механик/Главный инженер/Начальник производства/Технический директор]
-Компания: [ЖБИ завод/Машиностроительный завод/Металлоторговая компания/Строительная компания/Производство металлоконструкций], [размер]
-
-📦 ВЫ ПРОДАЕТЕ: [Листовой металл/Арматуру/Трубы/Метизы/Сварочные материалы/Металлообрабатывающие станки/Промышленную химию]
-
-ℹ️ БАЗОВАЯ СИТУАЦИЯ: 
-[ТОЛЬКО конкретные нейтральные факты с цифрами - объемы, количества, сроки, процессы. БЕЗ проблем и сложностей!]
-
-Теперь можете задать первый вопрос клиенту.
-
-
-Если нужна обратная связь от наставника — напишите ДА. Для завершения напишите "завершить". Если готовы к следующему вопросу — продолжайте."""
-
-WELCOME_MESSAGE = """🎯 ДОБРО ПОЖАЛОВАТЬ В ТРЕНАЖЕР SPIN-ПРОДАЖ!
-
-Привет! Ты находишься в тренажере вопросов по теории SPIN-продаж Нила Рекхема. Здесь ты научишься задавать правильные вопросы клиентам!
-
-📚 ТИПЫ ВОПРОСОВ SPIN:
-
-🔍 Ситуационные - собрать факты о текущей ситуации клиента
-⚠️ Проблемные - выявить проблемы, неудовлетворённость, скрытые потребности  
-💥 Извлекающие - показать последствия выявленных проблем, усилить их важность
-✨ Направляющие - подчеркнуть ценность решения, перевести беседу в зону пользы
-
-🎮 ПРАВИЛА ТРЕНИРОВКИ:
-До 10 вопросов | Цель: выяснить потребности и проблемы клиента | Задача: задать все 4 типа SPIN-вопросов
-
-Готов начать тренировку? Напиши "начать"! 
-Чтобы закончить тренировку в любой момент тренировки, напиши "завершить"."""
+# Глобальные объекты сценария и движка
+scenario_loader = ScenarioLoader()
+question_analyzer = QuestionAnalyzer()
+report_generator = ReportGenerator()
+scenario_config: Optional[Dict[str, Any]] = None
 
 def get_user_data(user_id: int) -> Dict[str, Any]:
     """Получение данных пользователя"""
@@ -122,23 +99,17 @@ async def call_openai(system_prompt: str, user_message: str) -> str:
         
         logger.error(f"Ошибка OpenAI: {e}")
         return f"Произошла ошибка при генерации ответа: {str(e)}"
-
-def analyze_question_type(question: str) -> str:
-    """Определение типа вопроса"""
-    question_lower = question.lower()
     
-    problem_keywords = ['проблем', 'сложност', 'трудност', 'недовольн', 'жалоб', 'беспокои']
-    implication_keywords = ['влия', 'последств', 'стоимост', 'убыт', 'потер', 'риск', 'результат']
-    need_payoff_keywords = ['помож', 'польз', 'выгод', 'важно', 'ценност', 'экономи']
-    
-    if any(keyword in question_lower for keyword in problem_keywords):
-        return 'Проблемный'
-    elif any(keyword in question_lower for keyword in implication_keywords):
-        return 'Извлекающий'
-    elif any(keyword in question_lower for keyword in need_payoff_keywords):
-        return 'Направляющий'
-    else:
-        return 'Ситуационный'
+def _ensure_scenario_loaded() -> Dict[str, Any]:
+    global scenario_config
+    if scenario_config is None:
+        try:
+            loaded = scenario_loader.load_scenario(SCENARIO_PATH)
+            scenario_config = loaded.config
+        except (FileNotFoundError, ScenarioValidationError) as e:
+            logger.error(f"Ошибка загрузки сценария: {e}")
+            raise
+    return scenario_config
 
 async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Обработчик команды /start"""
@@ -146,29 +117,43 @@ async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
     
     # Инициализация данных пользователя
+    cfg = _ensure_scenario_loaded()
+    rules = cfg["game_rules"]
     user_data[user_id] = {
         'question_count': 0,
         'clarity_level': 0,
-        'situational_q': 0,
-        'problem_q': 0,
-        'implication_q': 0,
-        'need_payoff_q': 0,
+        'per_type_counts': {t['id']: 0 for t in cfg['question_types']},
         'client_case': '',
         'last_question_type': '',
         'chat_state': 'started'
     }
     
-    await update.message.reply_text(WELCOME_MESSAGE)
+    await update.message.reply_text(scenario_loader.get_message('welcome'))
     
     # Генерируем кейс
     try:
-        client_case = await call_openai(CASE_GENERATION_PROMPT, 'Создай новый кейс')
+        system_prompt = scenario_loader.get_prompt('case_generation')
+        client_case = await call_openai(system_prompt, 'Создай новый кейс')
         user_data[user_id]['client_case'] = client_case
         user_data[user_id]['chat_state'] = 'waiting_question'
-        await update.message.reply_text(client_case)
+        await update.message.reply_text(
+            scenario_loader.get_message('case_generated', client_case=client_case)
+        )
     except Exception as e:
         logger.error(f"Ошибка генерации кейса: {e}")
-        await update.message.reply_text('Произошла ошибка при генерации кейса. Попробуйте позже.')
+        await update.message.reply_text(scenario_loader.get_message('error_generic'))
+
+async def scenario_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Показать информацию о текущем сценарии."""
+    try:
+        cfg = _ensure_scenario_loaded()
+        info = cfg.get('scenario_info', {})
+        await update.message.reply_text(
+            f"Сценарий: {info.get('name')} v{info.get('version')}\nОписание: {info.get('description')}\nПуть: {SCENARIO_PATH}"
+        )
+    except Exception as e:
+        logger.error(f"Ошибка отображения сценария: {e}")
+        await update.message.reply_text("Ошибка получения информации о сценарии.")
 
 async def handle_feedback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Обработка запроса обратной связи"""
@@ -179,35 +164,34 @@ async def handle_feedback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text('Сначала задайте вопрос клиенту.')
         return
     
-    feedback_prompt = f"""Вы наставник SPIN-продаж. Проанализируйте ситуацию и дайте обратную связь:
-
-Тип последнего вопроса: {user['last_question_type']}
-Количество заданных вопросов: {user['question_count']}
-Текущий уровень ясности: {user['clarity_level']}%
-
-Типы уже заданных вопросов:
-- Ситуационных: {user['situational_q']}
-- Проблемных: {user['problem_q']}  
-- Извлекающих: {user['implication_q']}
-- Направляющих: {user['need_payoff_q']}
-
-Дайте:
-1. Оценку корректности последнего вопроса (0-100%)
-2. Совет по улучшению формулировки
-3. Пример следующего вопроса подходящего типа для продвижения диалога"""
+    cfg = _ensure_scenario_loaded()
+    # Map legacy counters for prompt
+    situational_q = user['per_type_counts'].get('situational', 0)
+    problem_q = user['per_type_counts'].get('problem', 0)
+    implication_q = user['per_type_counts'].get('implication', 0)
+    need_payoff_q = user['per_type_counts'].get('need_payoff', 0)
+    feedback_prompt = scenario_loader.get_prompt(
+        'feedback',
+        last_question_type=user['last_question_type'],
+        question_count=user['question_count'],
+        clarity_level=user['clarity_level'],
+        situational_q=situational_q,
+        problem_q=problem_q,
+        implication_q=implication_q,
+        need_payoff_q=need_payoff_q,
+    )
 
     try:
         feedback = await call_openai(feedback_prompt, 'Проанализируй ситуацию')
-        await update.message.reply_text(f"""📊 ОБРАТНАЯ СВЯЗЬ ОТ НАСТАВНИКА:
-
-{feedback}
-
-Теперь попробуйте задать улучшенный вопрос.""")
+        await update.message.reply_text(
+            f"📊 ОБРАТНАЯ СВЯЗЬ ОТ НАСТАВНИКА:\n\n{feedback}\n\nТеперь попробуйте задать улучшенный вопрос."
+        )
     except Exception as e:
         logger.error(f"Ошибка получения обратной связи: {e}")
-        await update.message.reply_text('Ошибка получения обратной связи. Продолжайте задавать вопросы.')
+        await update.message.reply_text(scenario_loader.get_message('error_generic'))
 
 async def send_final_report(update: Update, user: Dict[str, Any]):
+<<<<<<< HEAD
     """Отправка финального отчета"""
     total_score = user['situational_q'] * 10 + user['problem_q'] * 15 + user['implication_q'] * 25 + user['need_payoff_q'] * 20
     
@@ -257,12 +241,21 @@ async def send_final_report(update: Update, user: Dict[str, Any]):
 
 🎯 Для новой тренировки напишите "начать" """
 
+=======
+    """Отправка финального отчета (универсально)."""
+    cfg = _ensure_scenario_loaded()
+    # Подсчет очков через анализатор, используя конфиг
+    user['total_score'] = QuestionAnalyzer().calculate_score(user, cfg['question_types'])
+    report = ReportGenerator().generate_final_report(user, cfg)
+>>>>>>> c0edbca (Refactor: convert to universal training-bot constructor (engine, scenarios, docs))
     await update.message.reply_text(report)
 
 async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Обработка текстовых сообщений"""
     user_id = update.effective_user.id
     message_text = update.message.text
+    cfg = _ensure_scenario_loaded()
+    rules = cfg['game_rules']
     
     if message_text.lower() in ['начать', 'старт']:
         await start_command(update, context)
@@ -279,96 +272,99 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
             del user_data[user_id]
         return
     
-    if len(message_text) <= 5:
+    if len(message_text) <= rules.get('short_question_threshold', 5):
         await update.message.reply_text('Задайте более развернутый вопрос клиенту или напишите "начать" для новой тренировки.')
         return
     
     user = get_user_data(user_id)
     
-    if user['question_count'] >= 10:
+    if user['question_count'] >= rules['max_questions']:
         await send_final_report(update, user)
         if user_id in user_data:
             del user_data[user_id]
         return
     
     try:
-        # Определяем тип вопроса
-        question_type = analyze_question_type(message_text)
+        # Определяем тип вопроса из конфига
+        qtype = question_analyzer.analyze_type(message_text, cfg['question_types'])
+        question_type_name = qtype.get('name', qtype.get('id'))
         
         # Обновляем счетчики
         user['question_count'] += 1
-        user['last_question_type'] = question_type
-        
-        if question_type == 'Ситуационный':
-            user['situational_q'] += 1
-            user['clarity_level'] += 10
-        elif question_type == 'Проблемный':
-            user['problem_q'] += 1
-            user['clarity_level'] += 15
-        elif question_type == 'Извлекающий':
-            user['implication_q'] += 1
-            user['clarity_level'] += 25
-        elif question_type == 'Направляющий':
-            user['need_payoff_q'] += 1
-            user['clarity_level'] += 20
+        user['last_question_type'] = question_type_name
+
+        qid = qtype.get('id')
+        user['per_type_counts'][qid] = int(user['per_type_counts'].get(qid, 0)) + 1
+        user['clarity_level'] += question_analyzer.calculate_clarity_increase(qtype)
         
         user['clarity_level'] = min(user['clarity_level'], 100)
         
         # Генерируем ответ клиента
-        client_prompt = f"""Вы клиент из кейса: {user['client_case']}
-
-Отвечайте нейтрально и сдержанно. НЕ раскрывайте проблемы сами - только на конкретные СПИН-вопросы. 
-
-Принципы ответов:
-- На ситуационные вопросы: давайте факты
-- На проблемные: признавайте проблемы, но не драматизируйте
-- На извлекающие: раскрывайте последствия постепенно
-- На направляющие: подтверждайте ценность решений
-
-Отвечайте коротко, реалистично, как настоящий занятой руководитель."""
-
+        client_prompt = scenario_loader.get_prompt('client_response', client_case=user['client_case'])
         client_response = await call_openai(client_prompt, f"Вопрос: {message_text}")
         
         # Проверяем условия завершения
-        if user['question_count'] >= 10 or user['clarity_level'] >= 80:
-            if user['clarity_level'] >= 80 and user['question_count'] >= 5:
-                await update.message.reply_text(f"""Был задан {question_type} вопрос
-
-{client_response}
-
-🏁 Достигнута ясность {user['clarity_level']}%. Завершить тренировку? (напишите "завершить" или продолжайте задавать вопросы)""")
-            elif user['question_count'] >= 10:
+        if user['question_count'] >= rules['max_questions'] or user['clarity_level'] >= rules['target_clarity']:
+            if user['clarity_level'] >= rules['target_clarity'] and user['question_count'] >= rules['min_questions_for_completion']:
+                await update.message.reply_text(
+                    scenario_loader.get_message(
+                        'question_feedback',
+                        question_type=question_type_name,
+                        client_response=client_response,
+                        progress_line=scenario_loader.get_message(
+                            'progress', count=user['question_count'], max=rules['max_questions'], clarity=user['clarity_level']
+                        )
+                    )
+                )
+                await update.message.reply_text(
+                    scenario_loader.get_message('clarity_reached', clarity=user['clarity_level'])
+                )
+            elif user['question_count'] >= rules['max_questions']:
                 await send_final_report(update, user)
                 if user_id in user_data:
                     del user_data[user_id]
             else:
-                await update.message.reply_text(f"""Был задан {question_type} вопрос
-
-{client_response}
-
-Если нужна обратная связь от наставника — напишите ДА. Для завершения напишите "завершить". Если готовы к следующему вопросу — продолжайте.
-
-📊 Прогресс: {user['question_count']}/10 вопросов, ясность {user['clarity_level']}%""")
+                await update.message.reply_text(
+                    scenario_loader.get_message(
+                        'question_feedback',
+                        question_type=question_type_name,
+                        client_response=client_response,
+                        progress_line=scenario_loader.get_message(
+                            'progress', count=user['question_count'], max=rules['max_questions'], clarity=user['clarity_level']
+                        )
+                    )
+                )
         else:
-            await update.message.reply_text(f"""Был задан {question_type} вопрос
-
-{client_response}
-
-Если нужна обратная связь от наставника — напишите ДА. Для завершения напишите "завершить". Если готовы к следующему вопросу — продолжайте.
-
-📊 Прогресс: {user['question_count']}/10 вопросов, ясность {user['clarity_level']}%""")
+            await update.message.reply_text(
+                scenario_loader.get_message(
+                    'question_feedback',
+                    question_type=question_type_name,
+                    client_response=client_response,
+                    progress_line=scenario_loader.get_message(
+                        'progress', count=user['question_count'], max=rules['max_questions'], clarity=user['clarity_level']
+                    )
+                )
+            )
     
     except Exception as e:
         logger.error(f"Ошибка обработки сообщения: {e}")
-        await update.message.reply_text('Произошла ошибка. Попробуйте еще раз.')
+        await update.message.reply_text(scenario_loader.get_message('error_generic'))
 
 def main():
     """Запуск бота"""
     # Создание приложения
     application = Application.builder().token(BOT_TOKEN).build()
     
+    # Предварительная загрузка сценария с обработкой ошибок
+    try:
+        _ensure_scenario_loaded()
+    except Exception:
+        logger.exception("Критическая ошибка загрузки сценария. Проверьте SCENARIO_PATH и формат config.json")
+        # Продолжаем запускать бота, но команды будут возвращать ошибки при обращении к сценарию
+    
     # Добавление обработчиков
     application.add_handler(CommandHandler("start", start_command))
+    application.add_handler(CommandHandler("scenario", scenario_command))
     application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
     
     # Запуск бота
