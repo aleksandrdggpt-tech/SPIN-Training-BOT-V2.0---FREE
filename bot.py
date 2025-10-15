@@ -970,21 +970,10 @@ def main():
     # Запуск бота
     logger.info("SPIN Training Bot запущен!")
     
-    # Запускаем бота в фоне
-    import asyncio
-    import threading
-    
-    def run_bot():
-        asyncio.run(application.run_polling())
-    
-    bot_thread = threading.Thread(target=run_bot, daemon=True)
-    bot_thread.start()
-    
     # Запускаем простой веб-сервер для health checks
     from http.server import HTTPServer, BaseHTTPRequestHandler
     import socket
     import threading
-    import asyncio
     
     class HealthCheckHandler(BaseHTTPRequestHandler):
         def do_GET(self):
@@ -1020,9 +1009,9 @@ def main():
     except Exception as e:
         logger.error(f"Ошибка запуска health check сервера: {e}")
 
-    # Запускаем бота (основной поток) с корректным event loop
+    # Запускаем бота (основной поток)
     try:
-        asyncio.run(application.run_polling())
+        application.run_polling()
     except Exception:
         logger.exception("Критическая ошибка запуска бота")
 
