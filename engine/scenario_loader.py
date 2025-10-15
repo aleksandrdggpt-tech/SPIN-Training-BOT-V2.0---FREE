@@ -47,6 +47,9 @@ class ScenarioLoader:
             config: Dict[str, Any] = json.load(f)
 
         self.validate_config(config)
+        # Optional deep validation for case variants if present
+        if 'case_variants' in config:
+            self._validate_case_variants(config['case_variants'])
         self._loaded = LoadedScenario(path=path, config=config)
         logger.info("Scenario loaded: %s v%s", config.get("scenario_info", {}).get("name"), config.get("scenario_info", {}).get("version"))
         return self._loaded
@@ -94,6 +97,30 @@ class ScenarioLoader:
         for k in ["progress_format", "commands"]:
             if k not in ui:
                 raise ScenarioValidationError(f"ui.{k} is required")
+
+    def _validate_case_variants(self, variants: Dict[str, Any]) -> None:
+        """Validate the optional case_variants section."""
+        # positions or positions_by_size acceptable
+        required_keys = ['companies', 'company_sizes', 'regions', 'products', 'base_situations']
+        for key in required_keys:
+            if key not in variants:
+                raise ScenarioValidationError(f"Missing required key in case_variants: {key}")
+            if not variants[key]:
+                raise ScenarioValidationError(f"Empty list in case_variants.{key}")
+
+        if ('positions' not in variants) and ('positions_by_size' not in variants):
+            raise ScenarioValidationError("case_variants must contain either 'positions' or 'positions_by_size'")
+
+        for product in variants.get('products', []):
+            if 'name' not in product:
+                raise ScenarioValidationError(f"Product missing 'name': {product}")
+            if 'unit' not in product:
+                logger.warning("Product %s missing 'unit', default will be used", product.get('name', '<unknown>'))
+
+        for situation in variants.get('base_situations', []):
+            if 'type' not in situation or 'template' not in situation:
+                raise ScenarioValidationError(f"Base situation missing required fields: {situation}")
+        logger.info("✅ Валидация case_variants пройдена успешно")
 
     def _ensure_loaded(self) -> LoadedScenario:
         if not self._loaded:

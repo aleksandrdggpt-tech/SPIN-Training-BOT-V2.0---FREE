@@ -28,6 +28,31 @@ pip install -r requirements.txt
 BOT_TOKEN=...            # токен Telegram-бота
 OPENAI_API_KEY=...       # ключ OpenAI
 SCENARIO_PATH=scenarios/spin_sales/config.json  # путь к сценарию
+
+# (опционально) Anthropic для fallback
+ANTHROPIC_API_KEY=...
+
+# Таймаут/ретраи LLM
+LLM_TIMEOUT_SEC=30
+LLM_MAX_RETRIES=1
+
+# Конвейер ответов клиента
+RESPONSE_PRIMARY_PROVIDER=openai
+RESPONSE_PRIMARY_MODEL=gpt-4o-mini
+RESPONSE_FALLBACK_PROVIDER=anthropic
+RESPONSE_FALLBACK_MODEL=claude-3-haiku-latest
+
+# Конвейер фидбека наставника
+FEEDBACK_PRIMARY_PROVIDER=openai
+FEEDBACK_PRIMARY_MODEL=gpt-5-mini
+FEEDBACK_FALLBACK_PROVIDER=anthropic
+FEEDBACK_FALLBACK_MODEL=claude-3-5-sonnet-latest
+
+# Конвейер классификации вопросов (SPIN)
+CLASSIFICATION_PRIMARY_PROVIDER=openai
+CLASSIFICATION_PRIMARY_MODEL=gpt-4o-mini
+CLASSIFICATION_FALLBACK_PROVIDER=openai
+CLASSIFICATION_FALLBACK_MODEL=gpt-3.5-turbo
 ```
 
 3) Запуск:
@@ -35,7 +60,7 @@ SCENARIO_PATH=scenarios/spin_sales/config.json  # путь к сценарию
 python bot.py
 ```
 
-Команды в чате: `/start`, `/scenario`, а также текстовые: "начать", "завершить", "ДА".
+Команды в чате: `/start`, `/help`, `/scenario`, `/stats`, `/rank`, `/case`, `/validate`, а также текстовые: "начать", "завершить", "ДА".
 
 ## Создание нового сценария
 
