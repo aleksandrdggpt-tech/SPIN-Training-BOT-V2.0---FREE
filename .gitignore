@@ -10,3 +10,5 @@ __pycache__/
 .vscode/
 *.log
 logs/
+# Version archives (optional - можно закомментировать если хотите версионировать)
+# versions/
