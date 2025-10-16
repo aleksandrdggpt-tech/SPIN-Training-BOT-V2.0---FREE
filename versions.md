@@ -5,6 +5,14 @@
 
 Ссылки: `https://github.com/aleksandrdggpt-tech/SPIN-Training-Bot`, `https://github.com/aleksandrdggpt-tech/SPIN-Training-BOT-V2.0---FREE`.
 
+## Версия 1 (legacy)
+- Репозиторий/папка: `/Users/aleksandrdg/Projects/SPIN Training BOT` (`SPIN-Training-Bot`).
+- Архитектура: монолитный `bot.py` с жёстко зашитой SPIN‑логикой.
+- Деплой: развёрнут на виртуальной машине Railway (railway.app).
+  - Используется контейнерный деплой (Docker/Nixpacks в Railway), переменные окружения задаются в Railway Dashboard.
+  - Автоперезапуск процесса обеспечивается платформой Railway; логи и метрики доступны в консоли Railway.
+- Интеграции: OpenAI; управление конфигурацией преимущественно через `.env` и код.
+
 ## Ключевые отличия
 - Архитектура стала модульной:
   - Добавлен `engine/` (загрузчик сценариев, анализатор вопросов, генератор отчётов, генератор кейсов):
