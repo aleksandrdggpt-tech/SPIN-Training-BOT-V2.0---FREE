@@ -1,5 +1,11 @@
 # Changelog
 
+## 2.1.1 — 2025-10-16 (docs)
+
+- Added `versions.md` comparing legacy project vs V2.0 — FREE.
+- Clarified modular architecture and scenario-driven configuration in README.
+- Note: ensure `.env` and logs are excluded from version control; purge secrets from history if committed.
+
 ## 2.1.0 — 2025-10-15
 
 - Case generation: local generator (engine/case_generator.py) with validation/compatibility, uniqueness, logging.
