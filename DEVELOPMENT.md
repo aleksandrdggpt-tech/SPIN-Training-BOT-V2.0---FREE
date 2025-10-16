@@ -57,10 +57,13 @@ docker build -t spin-bot:v3.0 .
 docker run -d --env-file .env spin-bot:v3.0
 ```
 
-### Тестирование на Fly.io
+### Деплой на Railway
 ```bash
-# Деплой тестовой версии
-fly deploy --app spin-training-bot-v3
+# Деплой тестовой версии (пример)
+# 1) Создайте проект в Railway
+# 2) Подключите репозиторий GitHub
+# 3) Добавьте переменные окружения (.env) в Railway Variables
+# 4) Запустите деплой из UI Railway или CLI
 ```
 
 ## Чек-лист перед релизом
@@ -71,5 +74,5 @@ fly deploy --app spin-training-bot-v3
 - [ ] Обновлен VERSIONS.md
 - [ ] Протестировано локально
 - [ ] Протестировано в Docker
-- [ ] Протестировано на Fly.io (staging)
+- [ ] Протестировано на Railway (staging)
 - [ ] Создан архив версии
